@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>NIFTY 50 – Live Market Dashboard</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+
+<style>
+body {
+  background: #f8fafc;
+  font-family: system-ui;
+  color: #0f172a;
+}
+
+h1 span { color: #2563eb; }
+
+.card {
+  border-radius: 14px;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 8px 20px rgba(0,0,0,.05);
+}
+
+.table thead {
+  background: #f1f5f9;
+  position: sticky;
+  top: 0;
+}
+
+.gain { color: #16a34a; font-weight: 600; }
+.loss { color: #dc2626; font-weight: 600; }
+
+.badge-up { background: #dcfce7; color: #166534; }
+.badge-down { background: #fee2e2; color: #991b1b; }
+
+.symbol { font-weight: 600; }
+
+/* 🔔 Toast styling */
+.toast-container {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 9999;
+}
+.toast {
+  border-left: 6px solid #2563eb;
+}
+.toast.gain { border-color: #16a34a; }
+.toast.loss { border-color: #dc2626; }
+.toast.volume { border-color: #7c3aed; }
+</style>
+</head>
+
+<body>
+
+<div class="container py-4">
+
+  <div class="text-center mb-4">
+    <h1>📊 <span>NIFTY 50</span> Live Dashboard</h1>
+    <small class="text-muted">Auto refresh every 60 seconds</small>
+  </div>
+
+  <!-- SEARCH & FILTER -->
+  <div class="card p-3 mb-4">
+    <div class="row g-3">
+      <div class="col-md-4">
+        <input id="searchInput" class="form-control" placeholder="Search symbol">
+      </div>
+      <div class="col-md-4">
+        <select id="priceFilter" class="form-select">
+          <option value="all">All</option>
+          <option value="gain">Gainers</option>
+          <option value="loss">Losers</option>
+        </select>
+      </div>
+      <div class="col-md-4">
+        <select id="volumeFilter" class="form-select">
+          <option value="all">All</option>
+          <option value="up">Volume +</option>
+          <option value="down">Volume −</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <!-- TABLES -->
+  <div class="row g-4">
+    <div class="col-lg-4">
+      <div class="card p-3">
+        <h5 class="text-success">🚀 Top Gainers</h5>
+        <table class="table table-hover">
+          <thead><tr><th>Symbol</th><th>%</th><th>Vol</th></tr></thead>
+          <tbody id="gainers"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="col-lg-4">
+      <div class="card p-3">
+        <h5 class="text-danger">📉 Top Losers</h5>
+        <table class="table table-hover">
+          <thead><tr><th>Symbol</th><th>%</th><th>Vol</th></tr></thead>
+          <tbody id="losers"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="col-lg-4">
+      <div class="card p-3">
+        <h5>⚡ Volume Burst</h5>
+        <table class="table table-hover">
+          <thead><tr><th>Symbol</th><th>Vol</th><th>Move</th></tr></thead>
+          <tbody id="volumeBurst"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 🔔 Toast container -->
+<div class="toast-container" id="toastContainer"></div>
+
+<!-- 🔊 Sound -->
+<audio id="alertSound">
+  <source src="https://assets.mixkit.co/sfx/preview/mixkit-alert-quick-chime-766.mp3" type="audio/mpeg">
+</audio>
+
+<script>
+const API = "https://script.google.com/macros/s/AKfycbyRR90MztV4a9mZYJMJrhZWWeXTSx6n6ykRqq2FihaIhmzPTEXTyx3JWu8wAYXvBZQB/exec";
+const REFRESH = 60000;
+
+let raw = [];
+let prev = { gainers: [], losers: [], volume: [] };
+
+async function load() {
+  const res = await fetch(API);
+  raw = (await res.json()).filter(d => typeof d["CHANGE %"] === "number");
+  apply();
+}
+
+function apply() {
+  let data = raw.filter(d => d.SYMBOL.includes(searchInput.value.toUpperCase()));
+
+  if (priceFilter.value === "gain") data = data.filter(d => d["CHANGE %"] > 0);
+  if (priceFilter.value === "loss") data = data.filter(d => d["CHANGE %"] < 0);
+  if (volumeFilter.value === "up") data = data.filter(d => d["CHANGE %"] > 0);
+  if (volumeFilter.value === "down") data = data.filter(d => d["CHANGE %"] < 0);
+
+  render(data);
+}
+
+function render(data) {
+  const sorted = [...data].sort((a,b)=>b["CHANGE %"]-a["CHANGE %"]);
+  const gain = sorted.slice(0,5);
+  const loss = sorted.slice(-5).reverse();
+  const vol = [...data].sort((a,b)=>b.VOLUME-a.VOLUME).slice(0,5);
+
+  notify("gainers", gain, "🚀 New Top Gainer", "gain");
+  notify("losers", loss, "📉 New Top Loser", "loss");
+  notify("volume", vol, "⚡ Volume Burst", "volume");
+
+  prev = {
+    gainers: gain.map(x=>x.SYMBOL),
+    losers: loss.map(x=>x.SYMBOL),
+    volume: vol.map(x=>x.SYMBOL)
+  };
+
+  gainers.innerHTML = gain.map(r=>`
+    <tr><td>${r.SYMBOL.replace("NSE:","")}</td><td class="gain">${r["CHANGE %"].toFixed(2)}%</td><td>${r.VOLUME.toLocaleString()}</td></tr>`).join("");
+
+  losers.innerHTML = loss.map(r=>`
+    <tr><td>${r.SYMBOL.replace("NSE:","")}</td><td class="loss">${r["CHANGE %"].toFixed(2)}%</td><td>${r.VOLUME.toLocaleString()}</td></tr>`).join("");
+
+  volumeBurst.innerHTML = vol.map(r=>`
+    <tr><td>${r.SYMBOL.replace("NSE:","")}</td><td>${r.VOLUME.toLocaleString()}</td>
+    <td><span class="badge ${r["CHANGE %"]>=0?"badge-up":"badge-down"}">${r["CHANGE %"]>=0?"▲":"▼"} ${Math.abs(r["CHANGE %"]).toFixed(2)}%</span></td></tr>`).join("");
+}
+
+function notify(type, list, title, cls) {
+  if (!prev[type].length) return;
+  list.forEach(s => {
+    if (!prev[type].includes(s.SYMBOL)) {
+      showToast(title, s.SYMBOL.replace("NSE:",""), cls);
+    }
+  });
+}
+
+function showToast(title, msg, cls) {
+  alertSound.play();
+  const t = document.createElement("div");
+  t.className = `toast show ${cls}`;
+  t.innerHTML = `
+    <div class="toast-body">
+      <strong>${title}</strong><br>${msg}
+    </div>`;
+  toastContainer.appendChild(t);
+  setTimeout(()=>t.remove(), 5000);
+}
+
+["searchInput","priceFilter","volumeFilter"].forEach(e =>
+  document.getElementById(e).addEventListener("input", apply)
+);
+
+load();
+setInterval(load, REFRESH);
+</script>
+
+</body>
+</html>
